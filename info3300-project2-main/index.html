@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson@3"></script>
+    <title>Project 2</title>
+    <style>
+        .outline {
+            fill: none;
+            stroke: #333;
+            stroke-width: 1;
+        }
+
+        .national-outline {
+            fill: none;
+            stroke: #333; 
+            stroke-width: 1; 
+
+        }
+
+        #slider {
+            width: 300px;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+            height: 15px;
+            border-radius: 5px;
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.7;
+        }
+
+        #sliderValue {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            font-weight: bold;
+            margin-top: 10px;
+            font-family: Helvetica, sans-serif;
+            text-align: center;
+        }
+
+        #header {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            margin-top: 25px;
+            font-weight: bold;
+            font-size: 22px;
+            font-family: Helvetica, sans-serif;
+            text-align: center;
+        }
+
+        #body {
+            font-size: 13px;
+            padding: 20px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+            font-family: Helvetica, sans-serif;
+            text-align: center;
+        }
+
+        .highlight {
+            stroke-width: 3;
+            fill-opacity: 0.8;
+        }
+
+        .infoBox {
+            fill: #f9f9f9;
+            stroke: #333;
+            stroke-width: 1px;
+            padding: 5px;
+        }
+
+        .infoText {
+            font-size: 12px;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <label id="header">United States Covid Vaccinations - 2021</label>
+    <p id="body">The map below shows the spread of total COVID-19 vaccinations throughout the United States during the
+        year 2021.
+        Use the slider to show the cumulative values per month.
+        Note: Some issues with state coloring seen in September and November are due to lack of data in the original
+        vaccination dataset.
+    </p>
+    <svg id="USmap" height="610" width="1150" style="background: white; margin-bottom: 50px;"></svg>
+    <input type="range" id="slider" name="slider" min="1" max="12" step="1" value="1" />
+    <label for="slider" id="sliderValue"></label>
+    <svg id="colorLegend" height="50" width="750" style="background: #fff; margin-top:30px; margin-bottom:30px"></svg>
+    <script>
+        // initial svg setup
+        const svg = d3.select("#USmap");
+        const mapWidth = svg.attr("width");
+        const mapHeight = svg.attr("height");
+        const map = svg.append("g");
+
+        //domain is the max people fully vaccinated by Dec found with:
+        //const maxVaccinations = d3.max(statesGeo, d => d.properties.vaccinated);
+        const colorScale = d3.scaleSequential([0, 25376295], d3.interpolateBlues);
+
+        // projection and path for the map
+        const projection = d3.geoAlbersUsa().scale(1300).translate([mapWidth / 2, mapHeight / 2]);
+        const path = d3.geoPath().projection(projection);
+
+        // store data
+        const monthlyStatistics = {};
+        let us; 
+
+        // load and process data
+        async function loadAndDrawMap() {  
+            us = await d3.json("counties-10m.json");  // assign to 'us'
+
+
+            const vacs = await d3.csv('us_state_vaccinations.csv');
+
+            // // organize data by month
+            vacs.forEach(d => {
+                const date_var = new Date(d.date);
+                if (date_var.getFullYear() === 2021) {
+                    const monthKey = date_var.getFullYear() + '-' + String(date_var.getMonth() + 1).padStart(2, '0');
+                    if (!monthlyStatistics[monthKey]) {
+                        monthlyStatistics[monthKey] = {};
+                    }
+                    //If d doesn't have total population data, don't update
+                    if (d.people_fully_vaccinated) {
+                        monthlyStatistics[monthKey][d.location] = d;
+                    }
+                }
+
+            });
+
+            updateMap("2021-01");
+        }
+
+        // Function to handle mouseover event
+        function handleMouseOver(event, d) {
+            d3.select(event.target)
+                .classed('highlight', true);
+
+            const [x, y] = d3.pointer(event);
+
+            const infoBox = map.append('g')
+                .attr('class', 'infoBox')
+                .attr('transform', `translate(${x + 10},${y - 25})`);
+
+            infoBox.append('rect')
+                .attr('width', 120)
+                .attr('height', 40)
+                .attr('class', 'infoBoxRect');
+
+            infoBox.append('text')
+                .attr('x', 5)
+                .attr('y', 15)
+                .attr('class', 'infoText')
+                .text(`${d.properties.name}: ${d.properties.vaccinated}`);
+        }
+
+        // Function to handle mouseout event
+        function handleMouseOut(event) {
+            d3.select(event.target)
+                .classed('highlight', false);
+
+            map.selectAll('.infoBox').remove();
+        }
+
+
+        function updateMap(month) {
+            const dataForMonth = monthlyStatistics[month] || {};
+            const statesGeo = topojson.feature(us, us.objects.states).features;
+
+            // apply data to states and update color
+            statesGeo.forEach(state => {
+                var stateData = dataForMonth[state.properties.name];
+                //discovered mismatch in NY state name in the two files:
+                if(state.properties.name == 'New York'){
+                    stateData = dataForMonth['New York State'];
+                }
+                state.properties.vaccinated = stateData ? +stateData.people_fully_vaccinated : 0;
+            });
+
+
+
+            map.append("path")
+                .datum(topojson.mesh(us, us.objects.nation))
+                .attr("class", "national-outline")
+                .attr("d", path);
+
+            // draw states -- update outline color needed?
+            map.selectAll("path.state")
+                .data(statesGeo)
+                .join("path")
+                .attr("class", "state")
+                .attr("d", path)
+                .attr("fill", d => colorScale(d.properties.vaccinated))
+                .on('mouseover', (event, d) => handleMouseOver(event, d))
+                .on('mouseout', (event) => handleMouseOut(event));
+
+            map.selectAll("path.outline")
+                .data([topojson.mesh(us, us.objects.states, (a, b) => a !== b)])
+                .join("path")
+                .attr("class", "outline")
+                .attr("d", path);
+
+            // update slider label
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            var sliderLabel = document.getElementById("sliderValue");
+            sliderLabel.textContent = monthNames[month.split('-').pop() - 1] + ' 2021';
+        }
+
+        // load and draw initial map
+        loadAndDrawMap();
+        drawLegend("#colorLegend", colorScale);
+
+        // update slider data
+        d3.select("#slider").on("input", function () {
+            const month = "2021-" + String(this.value).padStart(2, '0');
+            updateMap(month);
+        });
+
+        // CODE CREDIT:
+        // The following legend structure is based off flexible legend-drawing function - Jeff Rzeszotarski, 2022
+        function drawLegend(legendSelector, legendColorScale) {
+
+            const offsets = { width: 10, top: 2, bottom: 24 };
+            const stepSize = 4;
+            const minMaxExtendPercent = 0;
+
+            const legend = d3.select(legendSelector);
+            const legendHeight = legend.attr("height");
+            const legendBarWidth = legend.attr("width") - (offsets.width * 2);
+            const legendMinMax = d3.extent(legendColorScale.domain());
+
+            const minMaxExtension = (legendMinMax[1] - legendMinMax[0]) * minMaxExtendPercent;
+            const barHeight = legendHeight - offsets.top - offsets.bottom;
+
+            let barScale = d3.scaleLinear().domain([legendMinMax[0] - minMaxExtension,
+            legendMinMax[1] + minMaxExtension])
+                .range([0, legendBarWidth]);
+            let barAxis = d3.axisBottom(barScale);
+
+            let bar = legend.append("g")
+                .attr("class", "legend colorbar")
+                .attr("transform", `translate(${offsets.width},${offsets.top})`)
+
+            // we have a continuous and roundable scale => making stepped rects
+
+            for (let i = 0; i < legendBarWidth; i = i + stepSize) {
+                let center = i + (stepSize / 2);
+                let dataCenter = barAxis.scale().invert(center);
+
+                bar.append("rect")
+                    .attr("x", i)
+                    .attr("y", 0)
+                    .attr("width", stepSize)
+                    .attr("height", barHeight)
+                    .style("fill", legendColorScale(dataCenter));
+            }
+
+            legend.append("g")
+                .attr("class", "legend axis")
+                .attr("transform", `translate(${offsets.width},${offsets.top + barHeight + 5})`)
+                .call(barAxis);
+
+        }
+        //END OF LEGEND CODE
+    </script>
+</body>
+
+</html>
